@@ -10,3 +10,7 @@ data/
 .terraform/
 *.tfstate
 *.tfstate.backup
+build/
+dist/
+build/
+dist/
