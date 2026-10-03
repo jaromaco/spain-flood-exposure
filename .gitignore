@@ -17,3 +17,4 @@ dist/
 response.json
 full_run.json
 run2.json
+tmp/

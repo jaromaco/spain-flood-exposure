@@ -1,8 +1,11 @@
 """Ingesta de edificios del Catastro INSPIRE (tema Buildings)."""
 
 import re
+import os
+from datetime import date
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
+import boto3
 
 import requests
 
@@ -12,7 +15,7 @@ FEED_URL = (
 )
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 CODE_RE = re.compile(r"A\.ES\.SDGC\.BU\.(\d{5})\.zip$", re.IGNORECASE)
-
+BUCKET = os.environ.get("DATALAKE_BUCKET", "jaromaco-flood-datalake")
 
 def list_municipalities(feed_url: str = FEED_URL) -> list[dict]:
     """Devuelve una lista con código, nombre y URL del ZIP de cada municipio."""
@@ -39,9 +42,35 @@ def list_municipalities(feed_url: str = FEED_URL) -> list[dict]:
                 )
     return municipalities
 
+def build_s3_key(catastro_code: str, ingest_date: date) -> str:
+    """Ruta en bronze para el ZIP de un municipio."""
+    return (
+        f"bronze/catastro/buildings/ingest_date={ingest_date.isoformat()}/"
+        f"A.ES.SDGC.BU.{catastro_code}.zip"
+    )
+
+def download_to_s3(muni: dict, bucket: str = BUCKET, ingest_date: date | None = None) -> str:
+    """Descarga el ZIP de un municipio y lo sube a S3 sin guardarlo en disco."""
+    ingest_date = ingest_date or date.today()
+    key = build_s3_key(muni["catastro_code"], ingest_date)
+    s3 = boto3.client("s3")
+    with requests.get(muni["url"], stream=True, timeout=120) as resp:
+        resp.raise_for_status()
+        resp.raw.decode_content = True
+        s3.upload_fileobj(
+            resp.raw,
+            bucket,
+            key,
+            ExtraArgs={
+                "ContentType": "application/zip",
+                "Metadata": {"source-url": muni["url"], "municipality": muni["catastro_code"]},
+            },
+        )
+    return f"s3://{bucket}/{key}"
 
 if __name__ == "__main__":
     munis = list_municipalities()
     print(f"Municipios encontrados: {len(munis)}")
-    for m in munis[:5]:
-        print(m)
+    smallest = munis[0]
+    print("Descargando:", smallest)
+    print("Guardado en:", download_to_s3(smallest))
